@@ -1,1 +1,1 @@
-PRISTINE bb-cache-repro input 2026-09-26 (unique content so this blob is not shared with any real build)
+PRISTINE bb-cache-repro input 2026-09-26 run-4-public-authenticated (unique content so this blob is not shared with any real build)

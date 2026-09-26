@@ -66,7 +66,10 @@ genrule(
 # by digest from the CAS like any other action. Whenever one of them is
 # scheduled onto an executor where a corrupting action ran, it sees the
 # modified bytes even though the digest Bazel requested is the pristine one.
-# Several copies raise the odds of landing on such an executor.
+# Many copies raise the odds of landing on such an executor; on a large shared
+# pool a few dozen is not enough.
+OBSERVERS = 200
+
 [
     genrule(
         name = "observe_%d" % i,
@@ -81,10 +84,10 @@ genrule(
             cat $(location input.txt) >> $@
         """,
     )
-    for i in range(24)
+    for i in range(OBSERVERS)
 ]
 
 filegroup(
     name = "all",
-    srcs = [":corrupt_direct", ":corrupt_via_symlink"] + [":observe_%d" % i for i in range(24)],
+    srcs = [":corrupt_direct", ":corrupt_via_symlink"] + [":observe_%d" % i for i in range(OBSERVERS)],
 )

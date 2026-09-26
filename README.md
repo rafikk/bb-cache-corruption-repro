@@ -16,8 +16,10 @@ lands in the cache.
 - `//:corrupt_direct` – appends to `input.txt`, one of its own inputs.
 - `//:corrupt_via_symlink` – same, but writes through a symlink created in
   scratch space (how our lint patcher triggered this in production).
-- `//:observe_NN` – 24 read-only consumers of `input.txt`, ordered after the
-  corrupting actions. They should all see the pristine content.
+- `//:observe_NN` – 200 read-only consumers of `input.txt`, ordered after the
+  corrupting actions. They should all see the pristine content. The count is
+  `OBSERVERS` in `BUILD.bazel`; on a large executor pool only a few of them
+  land on the executor that ran a corrupting action.
 - `check.sh` – compares each observer's output with `input.txt`.
 
 ## Run
@@ -25,6 +27,11 @@ lands in the cache.
     cp user.bazelrc.example user.bazelrc   # add the API key
     bazel build --config=remote //:all
     ./check.sh
+
+An API key is required to exercise the affected code path. Anonymous requests
+on BuildBuddy Cloud receive private copies of their inputs (`links=1` in the
+corrupt log) and the write is harmless; authenticated requests get hardlinks
+into the group's file cache (`links=2`).
 
 `--noremote_accept_cached` is set so every run re-executes all actions.
 To start from a digest no executor has seen yet, change a character in
@@ -35,15 +42,19 @@ To start from a digest no executor has seen yet, change a character in
 Expected: both `corrupt_*.log` files report `write ... failed`, and `check.sh`
 prints `ok` for every observer.
 
-Actual (2026-09-26, BuildBuddy Cloud, EU region, first attempt, fresh digest):
-both writes succeed, and 12 of the 24 observers print the `CORRUPTED ...` line appended by
-one of the corrupting actions:
+Actual, BuildBuddy Cloud EU region, 2026-09-26, first attempt with 24
+observers and a fresh digest: both writes succeed, and 12 of the 24 observers
+print the `CORRUPTED ...` line appended by one of the corrupting actions:
 
     before: 4227905353 links=2 mode=755 size=105
     write to input SUCCEEDED
     after:  4227905353 links=2 mode=755 size=170
     ...
     12 observer(s) received modified bytes for a pristine digest.
+
+Actual, BuildBuddy Cloud US (`remote.buildbuddy.io`), same day, 200 observers,
+fresh digest: both writes succeed and 2 of the 200 observers read the modified
+bytes, one from each corrupting action. Same mechanism, much larger pool.
 
 `links=2` shows the input is a hardlink shared with the file cache, and the
 inode does not change across the write. The `hostname` printed by each action is
