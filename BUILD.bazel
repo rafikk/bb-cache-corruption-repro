@@ -1,0 +1,90 @@
+# Minimal reproducer: an action that writes to one of its own input files
+# corrupts the executor's file cache, and later actions on the same executor
+# that consume the same input digest observe the modified content.
+
+platform(
+    name = "rbe",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+    exec_properties = {
+        "container-image": "docker://gcr.io/flame-public/rbe-ubuntu24-04@sha256:71e019772915a1406208ecff3749977560af4a0470ad052b5744f76cf7d97639",
+        "Arch": "amd64",
+        "OSFamily": "Linux",
+    },
+)
+
+# Step 1: misbehaving actions. Each appends to `input.txt`, which is an *input*
+# of the action. Under a local sandbox this write fails (inputs are read-only
+# symlinks); on a BuildBuddy executor the input is a hardlink into the file
+# cache and the write succeeds, modifying the cached file in place.
+#
+# `corrupt_direct` writes to the input path itself. `corrupt_via_symlink`
+# writes through a symlink it creates in the action's writable scratch area,
+# which is what our lint patcher did.
+genrule(
+    name = "corrupt_direct",
+    srcs = ["input.txt"],
+    outs = ["corrupt_direct.log"],
+    cmd = """
+        in=$(location input.txt)
+        {
+          echo "executor=$$(hostname) host=$${HOSTNAME:-?}"
+          echo "before: $$(stat -c '%i links=%h mode=%a size=%s' $$in)"
+          if echo "CORRUPTED (direct write) by $$(hostname) at $$(date -u +%FT%TZ)" >> $$in 2>&1; then
+            echo "write to input SUCCEEDED"
+          else
+            echo "write to input failed"
+          fi
+          echo "after:  $$(stat -c '%i links=%h mode=%a size=%s' $$in)"
+        } > $@
+    """,
+)
+
+genrule(
+    name = "corrupt_via_symlink",
+    srcs = ["input.txt"],
+    outs = ["corrupt_via_symlink.log"],
+    cmd = """
+        in=$(location input.txt)
+        scratch=$$(mktemp -d)
+        ln -s "$$PWD/$$in" "$$scratch/link.txt"
+        {
+          echo "executor=$$(hostname)"
+          if echo "CORRUPTED (write through symlink) by $$(hostname) at $$(date -u +%FT%TZ)" >> "$$scratch/link.txt" 2>&1; then
+            echo "write through symlink to input SUCCEEDED"
+          else
+            echo "write through symlink to input failed"
+          fi
+        } > $@
+    """,
+)
+
+# Step 2: innocent actions. They only read `input.txt`. They are ordered after
+# the corrupting actions via a dependency on their logs, but receive `input.txt`
+# by digest from the CAS like any other action. Whenever one of them is
+# scheduled onto an executor where a corrupting action ran, it sees the
+# modified bytes even though the digest Bazel requested is the pristine one.
+# Several copies raise the odds of landing on such an executor.
+[
+    genrule(
+        name = "observe_%d" % i,
+        srcs = [
+            "input.txt",
+            ":corrupt_direct",
+            ":corrupt_via_symlink",
+        ],
+        outs = ["observed_%d.txt" % i],
+        cmd = """
+            echo "executor=$$(hostname)" > $@
+            cat $(location input.txt) >> $@
+        """,
+    )
+    for i in range(24)
+]
+
+filegroup(
+    name = "all",
+    srcs = [":corrupt_direct", ":corrupt_via_symlink"] + [":observe_%d" % i for i in range(24)],
+)

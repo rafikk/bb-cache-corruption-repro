@@ -1,0 +1,19 @@
+# Remote execution against BuildBuddy Cloud. Adjust the endpoints if your
+# organisation uses a regional or dedicated deployment. The API key lives in
+# user.bazelrc (git-ignored, see user.bazelrc.example).
+common:remote --remote_executor=grpcs://remote.buildbuddy.io
+common:remote --remote_cache=grpcs://remote.buildbuddy.io
+common:remote --bes_backend=grpcs://remote.buildbuddy.io
+common:remote --bes_results_url=https://app.buildbuddy.io/invocation/
+common:remote --platforms=//:rbe
+common:remote --extra_execution_platforms=//:rbe
+common:remote --remote_instance_name=bb-cache-repro
+
+# Re-execute every action on every run instead of reusing action results, so
+# each run actually exercises the executors' file caches.
+common:remote --noremote_accept_cached
+# Bring all outputs back to the client so check.sh can inspect them.
+common:remote --remote_download_outputs=all
+common:remote --jobs=64
+
+try-import %workspace%/user.bazelrc
